@@ -142,10 +142,16 @@ verify which rolling tag points to it.
 ## Qualification Workflows
 
 `Release E2E` and `Release E2E — Self-hosting` run on schedules and manually.
-The self-host workflow also exposes a reusable trigger, but no current release
-coordinator calls it. Its artifact-chain job is therefore not a release gate
-today, even though Testing's target requires an every-release gate. Do not
-infer coordinator wiring from the presence of `workflow_call`.
+The self-host workflow also exposes a reusable trigger, and the Nightly Release
+Train calls it as the `release-e2e-gate` job, so its artifact-chain job is a
+release gate: it runs after the train publishes the desktop artifact, and both
+`publish-product-release` and every production-promotion job require its success.
+A red artifact-chain verdict therefore blocks the product release and the
+zero-touch Production promotion. The gate runs only on a train that ships the
+desktop surface, because T4-SH-2 asserts the desktop version under test against
+the published desktop artifact; a train that releases only other surfaces has no
+new desktop artifact to verify. Running the workflow by schedule or dispatch gates
+nothing by itself — only the train's `release-e2e-gate` job does.
 
 ## Raw Product Release And Landing Boundary
 

@@ -251,6 +251,20 @@ jobs:
       target_os: all
     secrets: inherit
 
+  # ── Artifact-chain release gate (T4-SH-2, the 2026-07-09 incident gate) ───
+  # T4-SH-2 proves the desktop artifact this train just published is the artifact
+  # the CDN actually serves (versioned manifest, fetchable platform binaries, tag
+  # lineage). release-e2e-selfhost.yml has exposed workflow_call for exactly this;
+  # until now no release coordinator called it, so a red artifact chain stopped
+  # nothing and the train still published and promoted to Production.
+  release-e2e-gate:
+    needs: [prepare, release-desktop]
+    if: ${{ always() && needs.prepare.result == 'success' && needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.desktop == 'true' && needs.release-desktop.result == 'success' }}
+    uses: ./.github/workflows/release-e2e-selfhost.yml
+    with:
+      release_desktop_version: ${{ needs.prepare.outputs.desktop_version }}
+    secrets: inherit
+
   deploy-e2b:
     needs: [prepare]
     if: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.dry_run != 'true' && needs.prepare.outputs.selected_surfaces != '' }}
@@ -311,8 +325,8 @@ jobs:
   # must be removed for these to run unattended.
 
   deploy-e2b-prod:
-    needs: [prepare, deploy-e2b]
-    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-e2b.result == 'success' && needs.prepare.outputs.selected_surfaces != '' }}
+    needs: [prepare, deploy-e2b, release-e2e-gate]
+    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-e2b.result == 'success' && needs.prepare.outputs.selected_surfaces != '' && (needs.prepare.outputs.desktop != 'true' || needs.release-e2e-gate.result == 'success') }}
     uses: ./.github/workflows/_deploy-e2b.yml
     with:
       environment: Production
@@ -323,8 +337,8 @@ jobs:
     secrets: inherit
 
   deploy-server-prod:
-    needs: [prepare, deploy-server, deploy-e2b-prod]
-    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-server.result == 'success' && needs.prepare.outputs.selected_surfaces != '' }}
+    needs: [prepare, deploy-server, deploy-e2b-prod, release-e2e-gate]
+    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-server.result == 'success' && needs.prepare.outputs.selected_surfaces != '' && (needs.prepare.outputs.desktop != 'true' || needs.release-e2e-gate.result == 'success') }}
     uses: ./.github/workflows/_deploy-server.yml
     with:
       environment: Production
@@ -333,8 +347,8 @@ jobs:
     secrets: inherit
 
   deploy-workers-prod:
-    needs: [prepare, deploy-workers, deploy-server-prod]
-    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-workers.result == 'success' && needs.prepare.outputs.selected_surfaces != '' }}
+    needs: [prepare, deploy-workers, deploy-server-prod, release-e2e-gate]
+    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-workers.result == 'success' && needs.prepare.outputs.selected_surfaces != '' && (needs.prepare.outputs.desktop != 'true' || needs.release-e2e-gate.result == 'success') }}
     uses: ./.github/workflows/_deploy-workers.yml
     with:
       environment: Production
@@ -343,8 +357,8 @@ jobs:
     secrets: inherit
 
   deploy-web-prod:
-    needs: [prepare, deploy-web, deploy-server-prod]
-    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-web.result == 'success' && needs.prepare.outputs.selected_surfaces != '' }}
+    needs: [prepare, deploy-web, deploy-server-prod, release-e2e-gate]
+    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-web.result == 'success' && needs.prepare.outputs.selected_surfaces != '' && (needs.prepare.outputs.desktop != 'true' || needs.release-e2e-gate.result == 'success') }}
     uses: ./.github/workflows/_deploy-web.yml
     with:
       environment: Production
@@ -353,8 +367,8 @@ jobs:
     secrets: inherit
 
   deploy-mobile-prod:
-    needs: [prepare, deploy-mobile]
-    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-mobile.result == 'success' && needs.prepare.outputs.selected_surfaces != '' }}
+    needs: [prepare, deploy-mobile, release-e2e-gate]
+    if: ${{ always() && needs.prepare.outputs.dry_run != 'true' && needs.deploy-mobile.result == 'success' && needs.prepare.outputs.selected_surfaces != '' && (needs.prepare.outputs.desktop != 'true' || needs.release-e2e-gate.result == 'success') }}
     uses: ./.github/workflows/_deploy-mobile.yml
     with:
       environment: Production
@@ -373,6 +387,7 @@ jobs:
       - deploy-workers
       - deploy-web
       - deploy-mobile
+      - release-e2e-gate
     if: >-
       ${{
         always() &&
@@ -384,7 +399,7 @@ jobs:
           (
             (needs.prepare.outputs.runtime != 'true' || needs.release-runtime.result == 'success') &&
             (needs.prepare.outputs.server != 'true' || (needs.release-server.result == 'success' && needs.deploy-server.result == 'success')) &&
-            (needs.prepare.outputs.desktop != 'true' || needs.release-desktop.result == 'success') &&
+            (needs.prepare.outputs.desktop != 'true' || (needs.release-desktop.result == 'success' && needs.release-e2e-gate.result == 'success')) &&
             (needs.prepare.outputs.e2b != 'true' || needs.deploy-e2b.result == 'success') &&
             (needs.prepare.outputs.workers != 'true' || needs.deploy-workers.result == 'success') &&
             (needs.prepare.outputs.web != 'true' || needs.deploy-web.result == 'success') &&
@@ -451,6 +466,7 @@ jobs:
       - deploy-workers-prod
       - deploy-web-prod
       - deploy-mobile-prod
+      - release-e2e-gate
     if: ${{ always() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
@@ -465,6 +481,7 @@ jobs:
             echo "- Runtime release: \`${{ needs.release-runtime.result }}\`"
             echo "- Server release: \`${{ needs.release-server.result }}\`"
             echo "- Desktop release: \`${{ needs.release-desktop.result }}\`"
+            echo "- Artifact chain (T4-SH-2): \`${{ needs.release-e2e-gate.result }}\`"
             echo "- E2B staging: \`${{ needs.deploy-e2b.result }}\`"
             echo "- Server staging: \`${{ needs.deploy-server.result }}\`"
             echo "- Workers staging: \`${{ needs.deploy-workers.result }}\`"
